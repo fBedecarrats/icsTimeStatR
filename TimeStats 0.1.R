@@ -1,4 +1,4 @@
-# TIMESTATS
+# TIMESTATS 2
 
 # A R script to analyse events generated in an ics file
 # Designed for time management with Thunderbird
@@ -36,7 +36,7 @@ if (file.exists("TimeStats_options.Rdata")) {
     default.folder <- ""
     start.stats <- "01/01/2013"
     end.stats <- "31/12/2013"
-    hours.full.day <- "8"
+    hours.full.day <- 8
     days.off <- c(6,7)
   }
 
@@ -157,10 +157,10 @@ if(FALSE) { #Test the dialog
 } 
 # End fun by J Bryer
 
-options <- varEntryDialog(vars = c("start.stats", "end.stats"),
-                          labels = c("Date beginning dd/mm/yyyy", "Date end dd/mm/yyyy"),
-                          defaults = c(start.stats, end.stats),
-                          fun = c(as.character, as.character))
+options <- varEntryDialog(vars = c("start.stats", "end.stats", "hours.full.day"),
+                          labels = c("Date beginning dd/mm/yyyy", "Date end dd/mm/yyyy", "Maximum number of hours per day"),
+                          defaults = c(start.stats, end.stats, hours.full.day),
+                          fun = c(as.character, as.character, as.numeric))
 
 # Save options
 default.folder <- calendar.folder
@@ -224,29 +224,43 @@ calendar$calname <- regmatches(calendar$full, calendar$calname)
 calendar$calname <- unlist({calendar$calname[sapply(calendar$calname, length)==0] <- NA; calendar$calname})
 calendar$calname <- gsub("^BEGIN:VEVENT\t|.ics\t", "", calendar$calname)
 
+# Identifies full day activities
+calendar$full.day <- grepl("DTSTART;VALUE=DATE", calendar$full)
+
 # Extract begin time
-calendar$begin.icstime <- regexec("\tDTSTART;TZID=.*?\t", calendar$full)
+calendar$begin.icstime <- regexec("\tDTSTART.*?\t", calendar$full)
 calendar$begin.icstime <- regmatches(calendar$full, calendar$begin.icstime)
 calendar$begin.icstime <- unlist({calendar$begin.icstime[sapply(calendar$begin.icstime, length)==0] <- NA; calendar$begin.icstime})                                                             
-calendar$begin.icstime <- gsub("\tDTSTART;TZID=|(.*?):|\t", "", calendar$begin.icstime)
+calendar$begin.icstime <- gsub("\tDTSTART;.*=|(.*?):|\t", "", calendar$begin.icstime)
 calendar$begin.posixct <- ifelse(is.na(calendar$begin.icstime), NA, as.POSIXct(as.character(calendar$begin.icstime), format = "%Y%m%dT%H%M%S"))
+calendar$begin.posixct[calendar$full.day==TRUE] <- as.POSIXct(as.character(calendar$begin.icstime[calendar$full.day==TRUE]), format = "%Y%m%d")
 calendar$begin.date <- as.Date(calendar$begin.icstime, format = "%Y%m%d")
 
 # Extract end time
-calendar$end.icstime <- regexec("\tDTEND;TZID=.*?\t", calendar$full)
+calendar$end.icstime <- regexec("\tDTEND.*?\t", calendar$full)
 calendar$end.icstime <- regmatches(calendar$full, calendar$end.icstime)
 calendar$end.icstime <- unlist({calendar$end.icstime[sapply(calendar$end.icstime, length)==0] <- NA; calendar$end.icstime})
-calendar$end.icstime <- gsub("\tDTEND;TZID=|(.*?):|\t", "", calendar$end.icstime)
+calendar$end.icstime <- gsub("\tDTEND;.*=|(.*?):|\t", "", calendar$end.icstime)
 calendar$end.posixct <- ifelse(is.na(calendar$end.icstime), NA, as.POSIXct(as.character(calendar$end.icstime), format = "%Y%m%dT%H%M%S"))
+calendar$end.posixct[calendar$full.day==TRUE] <- as.POSIXct(as.character(calendar$end.icstime[calendar$full.day==TRUE]), format = "%Y%m%d")
 calendar$end.date <- as.Date(calendar$end.icstime, format = "%Y%m%d")
-
-# Convert dates as POSIXct (seconds since 01/01/1970) and calculate duration
-calendar$duration.hours <- (calendar$end.posixct - calendar$begin.posixct) / 3600
 
 # Keeps only events in the user screening range
 calendar <- subset(calendar, begin.date >= as.Date(start.stats, format = "%d/%m/%Y") &
                      end.date <= as.Date(end.stats, format = "%d/%m/%Y"),
                    select = c(-raw, -full))
+
+# Convert dates as POSIXct (seconds since 01/01/1970) and calculate duration
+calendar$duration.hours[calendar$full.day==FALSE] <- (calendar$end.posixct[calendar$full.day==FALSE] - calendar$begin.posixct[calendar$full.day==FALSE]) / 3600
+
+# Recalibrate due to maximum time
+for(i in 1:nrow(calendar)) {
+  if (calendar$full.day[i] == TRUE) {
+    set <- calendar$duration.hours[calendar$begin.date==calendar$begin.date[i] & calendar$calname==calendar$calname[i]]
+    calendar$duration.hours[i] <- hours.full.day - sum(set, na.rm = TRUE)
+  }
+}
+
 
 # TimeStats
 calendar$category <- factor(calendar$category, exclude = NULL)
